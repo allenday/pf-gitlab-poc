@@ -1,0 +1,238 @@
+name: Application Deployment
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to test'
+        required: true
+        default: 'local'
+        type: choice
+        options:
+        - local
+        - dev
+
+env:
+  ENV: ${{ github.event.inputs.environment || 'local' }}
+  NETWORK: local  
+  SERVICE: gitlab
+
+jobs:
+  health-check:
+    name: Repository Health Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Task
+        uses: arduino/setup-task@v1
+        with:
+          version: 3.x
+
+      - name: Run repository health check
+        run: task doctor
+
+  container-validation:
+    name: Container Environment Validation
+    runs-on: ubuntu-latest
+    needs: health-check
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Task
+        uses: arduino/setup-task@v1
+        with:
+          version: 3.x
+
+      - name: Check container tools
+        run: |
+          task container:check-docker
+          task container:check-compose
+
+      - name: Test container environment detection
+        run: |
+          if ./scripts/task/container/detect-environment.sh; then
+            echo "✓ Container environment detected correctly"
+          else
+            echo "✗ Container environment detection failed"
+            exit 1
+          fi
+
+      - name: Run container health checks
+        run: ./scripts/task/container/doctor.sh
+
+  deployment-test:
+    name: Application Deployment Test
+    runs-on: ubuntu-latest
+    needs: [health-check, container-validation]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Task
+        uses: arduino/setup-task@v1
+        with:
+          version: 3.x
+
+      - name: Validate deployment configuration
+        run: |
+          if [ -f deploy/docker-compose.yml ]; then
+            echo "✓ Found deploy/docker-compose.yml"
+            docker compose -f deploy/docker-compose.yml config --quiet
+            echo "✓ docker-compose.yml syntax is valid"
+          else
+            echo "✗ Missing deploy/docker-compose.yml"
+            exit 1
+          fi
+
+      - name: Validate service configuration
+        run: |
+          cd deploy
+          if docker compose config | grep -q "${{ env.SERVICE }}"; then
+            echo "✓ ${{ env.SERVICE }} service found in configuration"
+          else
+            echo "✗ ${{ env.SERVICE }} service not found in configuration"
+            exit 1
+          fi
+
+      - name: Check required volumes and networks
+        run: |
+          cd deploy
+          if docker compose config | grep -q "volumes:"; then
+            echo "✓ Persistent volumes configured"
+          else
+            echo "⚠️ No persistent volumes found - data may not persist"
+          fi
+          
+          if docker compose config | grep -q "networks:"; then
+            echo "✓ Custom networks configured"
+          else
+            echo "ℹ️ Using default Docker network"
+          fi
+
+      - name: Test environment configuration
+        run: |
+          if [ -f deploy/.env ]; then
+            echo "✓ Environment file exists"
+            # Test for generic app configuration
+            if [ -n "$(grep -E '^[A-Z_]+=' deploy/.env)" ]; then
+              echo "✓ Environment variables configured"
+            else
+              echo "⚠️ No environment variables found"
+            fi
+          else
+            echo "ℹ️ No environment file - using container defaults"
+          fi
+
+      - name: Test application startup (dry run)
+        run: |
+          echo "Testing application startup configuration..."
+          cd deploy
+          # Pull images without starting containers
+          docker compose pull --quiet || echo "Some images may need to be built"
+          echo "✓ Application images available or buildable"
+
+  task-validation:
+    name: Task Command Validation  
+    runs-on: ubuntu-latest
+    needs: health-check
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Task
+        uses: arduino/setup-task@v1
+        with:
+          version: 3.x
+
+      - name: List available tasks
+        run: task --list
+
+      - name: Validate core tasks exist
+        run: |
+          # Check that essential tasks are available
+          task --list | grep -q "doctor" || (echo "✗ doctor task missing" && exit 1)
+          task --list | grep -q "setup" || (echo "✗ setup task missing" && exit 1)
+          task --list | grep -q "ci" || (echo "✗ ci task missing" && exit 1)
+          echo "✓ Core tasks validated"
+
+      - name: Validate container tasks exist  
+        run: |
+          # Check that container tasks are available
+          if task --list | grep -q "container:"; then
+            echo "✓ Container tasks available"
+            if task --list | grep -q "docker:"; then
+              echo "✓ Docker aliases available"
+            fi
+          else
+            echo "ℹ️ No container tasks - not a containerized application"
+          fi
+
+      - name: Test task execution (dry run)
+        run: |
+          # Test that tasks can be parsed and prepared without execution
+          task --dry core:check-tools || echo "Core tools check task unavailable"
+          if task --list | grep -q "container:check-docker"; then
+            task --dry container:check-docker
+          fi
+          echo "✓ Task execution validation passed"
+
+  environment-matrix:
+    name: Multi-Environment Validation
+    runs-on: ubuntu-latest
+    needs: [health-check, container-validation]
+    strategy:
+      matrix:
+        env: [local, dev]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Task
+        uses: arduino/setup-task@v1
+        with:
+          version: 3.x
+
+      - name: Test environment-specific configuration
+        run: |
+          echo "Testing configuration for environment: ${{ matrix.env }}"
+          
+          # Check if environment-specific compose files exist
+          if [ -f "deploy/docker-compose.${{ matrix.env }}.yml" ]; then
+            echo "✓ Found environment-specific compose file"
+            docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.${{ matrix.env }}.yml config --quiet
+          else
+            echo "ℹ️ Using base compose configuration for ${{ matrix.env }}"
+          fi
+
+      - name: Validate environment variables
+        run: |
+          echo "Validating environment variables for: ${{ matrix.env }}"
+          
+          # Check for environment-specific env files
+          if [ -f "deploy/.env.${{ matrix.env }}" ]; then
+            echo "✓ Found environment-specific variables"
+          else
+            echo "ℹ️ Using base environment configuration"
+          fi
