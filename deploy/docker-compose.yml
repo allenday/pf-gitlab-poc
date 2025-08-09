@@ -1,0 +1,108 @@
+# Local GitLab Development Environment
+# Based on GitLab Community Edition for local testing
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    hostname: 'gitlab.local'
+    container_name: gitlab-local
+    restart: always
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab.local'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        # Disable HTTPS redirect for local development
+        nginx['redirect_http_to_https'] = false
+        # Performance optimization for local development
+        postgresql['shared_buffers'] = "256MB"
+        postgresql['max_worker_processes'] = 8
+        unicorn['worker_processes'] = 2
+        sidekiq['max_concurrency'] = 25
+    ports:
+      - '80:80'
+      - '443:443'  
+      - '2222:22'
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    networks:
+      - gitlab-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/-/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:latest
+    container_name: gitlab-runner-local
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab_runner_config:/etc/gitlab-runner
+    networks:
+      - gitlab-network
+    depends_on:
+      - gitlab
+    environment:
+      - CI_SERVER_URL=http://gitlab.local/
+    healthcheck:
+      test: ["CMD", "gitlab-runner", "verify"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Redis for external caching (GitLab CE includes Redis by default)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: gitlab-redis-local
+  #   restart: always
+  #   volumes:
+  #     - gitlab_redis_data:/data
+  #   networks:
+  #     - gitlab-network
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+  # Optional: PostgreSQL for external database (GitLab CE includes PostgreSQL by default)  
+  # postgres:
+  #   image: postgres:15
+  #   container_name: gitlab-postgres-local
+  #   restart: always
+  #   environment:
+  #     POSTGRES_DB: gitlabhq_production
+  #     POSTGRES_USER: gitlab
+  #     POSTGRES_PASSWORD: gitlab_password
+  #   volumes:
+  #     - gitlab_postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - gitlab-network
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U gitlab"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+volumes:
+  gitlab_config:
+    name: gitlab_config
+  gitlab_logs:
+    name: gitlab_logs  
+  gitlab_data:
+    name: gitlab_data
+  gitlab_runner_config:
+    name: gitlab_runner_config
+  # gitlab_redis_data:
+  #   name: gitlab_redis_data
+  # gitlab_postgres_data:
+  #   name: gitlab_postgres_data
+
+networks:
+  gitlab-network:
+    name: gitlab-network
+    driver: bridge
