@@ -1,1 +1,0 @@
-../third_party/taskfile-repo-template/scripts/task/__taskfile__/detect-repo.sh

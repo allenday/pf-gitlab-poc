@@ -1,1 +1,0 @@
-../third_party/taskfile-repo-template/scripts/task/core/check-tools.sh
