@@ -1,0 +1,86 @@
+version: '3'
+
+vars:
+  GITLAB_URL: 'http://localhost'
+
+tasks:
+  get-root-password:
+    desc: Get initial GitLab root password
+    dir: deploy
+    cmds:
+      - echo "Extracting GitLab root password..."
+      - |
+        if docker compose ps | grep -q "gitlab.*healthy"; then
+          echo "GitLab container is healthy, extracting password..."
+          docker compose exec gitlab grep 'Password:' /etc/gitlab/initial_root_password 2>/dev/null || echo "Password file not found - may need to wait longer for initialization"
+        else
+          echo "GitLab container not healthy yet, please wait and try again"
+          docker compose ps gitlab
+        fi
+
+  wait-ready:
+    desc: Wait for GitLab to be fully ready
+    dir: deploy
+    cmds:
+      - echo "Waiting for GitLab to be fully ready..."
+      - |
+        max_attempts=30
+        attempt=1
+        while [ $attempt -le $max_attempts ]; do
+          if curl -s -o /dev/null -w "%{http_code}" {{.GITLAB_URL}} | grep -q "200\|302"; then
+            echo "GitLab is responding (attempt $attempt/$max_attempts)"
+            break
+          else
+            echo "GitLab not ready yet (attempt $attempt/$max_attempts), waiting 10s..."
+            sleep 10
+            attempt=$((attempt + 1))
+          fi
+        done
+        if [ $attempt -gt $max_attempts ]; then
+          echo "GitLab failed to become ready after $max_attempts attempts"
+          exit 1
+        fi
+        echo "GitLab is now ready!"
+
+  setup:
+    desc: Complete GitLab post-deployment setup
+    deps: [wait-ready]
+    cmds:
+      - echo "Running GitLab post-deployment setup..."
+      - task: get-root-password
+      - echo ""
+      - echo "GitLab Setup Complete!"
+      - echo "Access GitLab at {{.GITLAB_URL}}"
+      - echo "Username root"
+      - echo "Password see above"
+
+  create-token:
+    desc: Automatically create a Personal Access Token
+    dir: deploy
+    cmds:
+      - ../scripts/task/app/gitlab-integration-test.sh create-token
+
+  test:
+    desc: Test GitLab API functionality with existing token
+    dir: deploy
+    cmds:
+      - ../scripts/task/app/gitlab-integration-test.sh test
+
+  test-auto:
+    desc: Automatically create token and run full integration test
+    deps: [wait-ready]
+    dir: deploy  
+    cmds:
+      - ../scripts/task/app/gitlab-integration-test.sh full
+
+  token-guide:
+    desc: Guide for manually creating a test Personal Access Token
+    cmds:
+      - echo "To manually create a GitLab Personal Access Token:"
+      - echo "1. Open GitLab at {{.GITLAB_URL}}"
+      - echo "2. Login as root with password from task app:get-root-password"
+      - echo "3. Go to User Settings > Access Tokens"
+      - echo "4. Create a token with api scope"
+      - echo "5. Test with task app:test"
+      - echo ""
+      - echo "Or use automated setup task app:test-auto"

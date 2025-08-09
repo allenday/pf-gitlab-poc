@@ -1,0 +1,1 @@
+../../third_party/taskfile-repo-template/scripts/task/setup-branch-protection.sh
