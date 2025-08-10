@@ -6,10 +6,10 @@ GITLAB_URL="http://localhost"
 GITLAB_API_URL="$GITLAB_URL/api/v4"
 
 # Default environment variables for secret naming
-NETWORK="${NETWORK:-local}"
-ENVIRONMENT="${ENVIRONMENT:-dev}"
-SERVICE="${SERVICE:-gitlab}"
-SECRET_NAME="${NETWORK}_${ENVIRONMENT}_${SERVICE}_gitlab_api_key"
+NETWORK="${NETWORK:-LOCAL}"
+ENVIRONMENT="${ENVIRONMENT:-DEV}"
+SERVICE="${SERVICE:-GITLAB}"
+SECRET_NAME="${NETWORK}_${ENVIRONMENT}_${SERVICE}_GITLAB_API_KEY"
 
 # Bitwarden Secrets Manager configuration
 BWS_ACCESS_TOKEN="${BWS_ACCESS_TOKEN:-}"
